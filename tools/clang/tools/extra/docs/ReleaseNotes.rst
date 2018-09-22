@@ -1,27 +1,28 @@
 =====================================
-Extra Clang Tools 6.0.0 Release Notes
+Extra Clang Tools 7.0.0 Release Notes
 =====================================
 
 .. contents::
    :local:
    :depth: 3
 
-Written by the `LLVM Team <http://llvm.org/>`_
+Written by the `LLVM Team <https://llvm.org/>`_
+
 
 Introduction
 ============
 
 This document contains the release notes for the Extra Clang Tools, part of the
-Clang release 6.0.0. Here we describe the status of the Extra Clang Tools in
+Clang release 7.0.0. Here we describe the status of the Extra Clang Tools in
 some detail, including major improvements from the previous release and new
 feature work. All LLVM releases may be downloaded from the `LLVM releases web
-site <http://llvm.org/releases/>`_.
+site <https://llvm.org/releases/>`_.
 
 For more information about Clang or LLVM, including information about
-the latest release, please see the `Clang Web Site <http://clang.llvm.org>`_ or
-the `LLVM Web Site <http://llvm.org>`_.
+the latest release, please see the `Clang Web Site <https://clang.llvm.org>`_ or
+the `LLVM Web Site <https://llvm.org>`_.
 
-What's New in Extra Clang Tools 6.0.0?
+What's New in Extra Clang Tools 7.0.0?
 ======================================
 
 Some of the major new features and improvements to Extra Clang Tools are listed
@@ -31,227 +32,214 @@ infrastructure are described first, followed by tool-specific sections.
 Improvements to clang-tidy
 --------------------------
 
-- New module `fuchsia` for Fuchsia style checks.
+- The checks profiling info can now be stored as JSON files for futher
+  post-processing and analysis.
 
-- New module `objc` for Objective-C style checks.
+- New module `abseil` for checks related to the `Abseil <https://abseil.io>`_
+  library.
 
-- New `android-cloexec-accept
-  <clang-tidy/checks/android-cloexec-accept.html>`_ check
+- New module ``portability``.
 
-  Detects usage of ``accept()``.
+- New module ``zircon`` for checks related to Fuchsia's Zircon kernel.
 
-- New `android-cloexec-accept4
-  <clang-tidy/checks/android-cloexec-accept4.html>`_ check
+- New :doc:`abseil-string-find-startswith
+  <clang-tidy/checks/abseil-string-find-startswith>` check.
 
-  Checks if the required file flag ``SOCK_CLOEXEC`` is present in the argument of
-  ``accept4()``.
+  Checks whether a ``std::string::find()`` result is compared with 0, and
+  suggests replacing with ``absl::StartsWith()``.
 
-- New `android-cloexec-dup
-  <clang-tidy/checks/android-cloexec-dup.html>`_ check
+- New :doc:`android-comparison-in-temp-failure-retry
+  <clang-tidy/checks/android-comparison-in-temp-failure-retry>` check.
 
-  Detects usage of ``dup()``.
+  Diagnoses comparisons that appear to be incorrectly placed in the argument to
+  the ``TEMP_FAILURE_RETRY`` macro.
 
-- New `android-cloexec-epoll-create
-  <clang-tidy/checks/android-cloexec-epoll-create.html>`_ check
+- New :doc:`bugprone-exception-escape
+  <clang-tidy/checks/bugprone-exception-escape>` check
 
-  Detects usage of ``epoll_create()``.
+  Finds functions which may throw an exception directly or indirectly, but they
+  should not.
 
-- New `android-cloexec-epoll-create1
-  <clang-tidy/checks/android-cloexec-epoll-create1.html>`_ check
+- New :doc:`bugprone-parent-virtual-call
+  <clang-tidy/checks/bugprone-parent-virtual-call>` check.
 
-  Checks if the required file flag ``EPOLL_CLOEXEC`` is present in the argument of
-  ``epoll_create1()``.
+  Detects and fixes calls to grand-...parent virtual methods instead of calls
+  to overridden parent's virtual methods.
 
-- New `android-cloexec-inotify-init
-  <clang-tidy/checks/android-cloexec-inotify-init.html>`_ check
+- New :doc:`bugprone-terminating-continue
+  <clang-tidy/checks/bugprone-terminating-continue>` check
 
-  Detects usage of ``inotify_init()``.
+  Checks if a ``continue`` statement terminates the loop.
 
-- New `android-cloexec-inotify-init1
-  <clang-tidy/checks/android-cloexec-inotify-init1.html>`_ check
+- New :doc:`bugprone-throw-keyword-missing
+  <clang-tidy/checks/bugprone-throw-keyword-missing>` check.
 
-  Checks if the required file flag ``IN_CLOEXEC`` is present in the argument of
-  ``inotify_init1()``.
+  Diagnoses when a temporary object that appears to be an exception is
+  constructed but not thrown.
 
-- New `android-cloexec-memfd_create
-  <clang-tidy/checks/android-cloexec-memfd-create.html>`_ check
+- New :doc:`bugprone-unused-return-value
+  <clang-tidy/checks/bugprone-unused-return-value>` check.
 
-  Checks if the required file flag ``MFD_CLOEXEC`` is present in the argument
-  of ``memfd_create()``.
+  Warns on unused function return values.
 
-- New `bugprone-copy-constructor-init
-  <clang-tidy/checks/bugprone-copy-constructor-init.html>`_ check
+- New :doc:`cert-msc32-c
+  <clang-tidy/checks/cert-msc32-c>` check
 
-  Finds copy constructors which don't call the copy constructor of the base class.
+  Detects inappropriate seeding of ``srand()`` function.
 
-- New `bugprone-integer-division
-  <clang-tidy/checks/bugprone-integer-division.html>`_ check
+- New :doc:`cert-msc51-cpp
+  <clang-tidy/checks/cert-msc51-cpp>` check
 
-  Finds cases where integer division in a floating point context is likely to
-  cause unintended loss of precision.
+  Detects inappropriate seeding of C++ random generators and C ``srand()`` function.
 
-- New `bugprone-misplaced-operator-in-strlen-in-alloc
-  <clang-tidy/checks/bugprone-misplaced-operator-in-strlen-in-alloc.html>`_ check
+- New :doc:`cppcoreguidelines-avoid-goto
+  <clang-tidy/checks/cppcoreguidelines-avoid-goto>` check.
 
-  Finds cases where ``1`` is added to the string in the argument to
-  ``strlen()``, ``strnlen()``, ``strnlen_s()``, ``wcslen()``, ``wcsnlen()``, and
-  ``wcsnlen_s()`` instead of the result and the value is used as an argument to
-  a memory allocation function (``malloc()``, ``calloc()``, ``realloc()``,
-  ``alloca()``) or the ``new[]`` operator in `C++`.
+  The usage of ``goto`` for control flow is error prone and should be replaced
+  with looping constructs. Every backward jump is rejected. Forward jumps are
+  only allowed in nested loops.
 
-- New `cppcoreguidelines-owning-memory <clang-tidy/checks/cppcoreguidelines-owning-memory.html>`_ check
+- New :doc:`cppcoreguidelines-narrowing-conversions
+  <clang-tidy/checks/cppcoreguidelines-narrowing-conversions>` check
 
-  This check implements the type-based semantic of ``gsl::owner<T*>``, but without
-  flow analysis.
+  Checks for narrowing conversions, e.g. ``int i = 0; i += 0.1;``.
 
-- New `fuchsia-default-arguments
-  <clang-tidy/checks/fuchsia-default-arguments.html>`_ check
+- New :doc:`fuchsia-multiple-inheritance
+  <clang-tidy/checks/fuchsia-multiple-inheritance>` check.
 
-  Warns if a function or method is declared or called with default arguments.
+  Warns if a class inherits from multiple classes that are not pure virtual.
 
-- New `fuchsia-overloaded-operator
-  <clang-tidy/checks/fuchsia-overloaded-operator.html>`_ check
+- New `fuchsia-restrict-system-includes
+  <https://clang.llvm.org/extra/clang-tidy/checks/fuchsia-restrict-system-includes.html>`_ check
 
-  Warns if an operator is overloaded, except for the assignment (copy and move) operators.
+  Checks for allowed system includes and suggests removal of any others.
 
-- New `fuchsia-virtual-inheritance
-  <clang-tidy/checks/fuchsia-virtual-inheritance.html>`_ check
+- New `fuchsia-statically-constructed-objects
+  <https://clang.llvm.org/extra/clang-tidy/checks/fuchsia-statically-constructed-objects.html>`_ check
 
-  Warns if classes are defined with virtual inheritance.
+  Warns if global, non-trivial objects with static storage are constructed,
+  unless the object is statically initialized with a ``constexpr`` constructor
+  or has no explicit constructor.
 
-- New `google-objc-avoid-throwing-exception
-  <clang-tidy/checks/google-objc-avoid-throwing-exception.html>`_ check
+- New :doc:`fuchsia-trailing-return
+  <clang-tidy/checks/fuchsia-trailing-return>` check.
 
-  Finds uses of throwing exceptions usages in Objective-C files.
+  Functions that have trailing returns are disallowed, except for those
+  using ``decltype`` specifiers and lambda with otherwise unutterable
+  return types.
 
-- New `google-objc-global-variable-declaration
-  <clang-tidy/checks/google-objc-global-variable-declaration.html>`_ check
+- New :doc:`hicpp-multiway-paths-covered
+  <clang-tidy/checks/hicpp-multiway-paths-covered>` check.
 
-  Finds global variable declarations in Objective-C files that do not follow the
-  pattern of variable names in Google's Objective-C Style Guide.
+  Checks on ``switch`` and ``if`` - ``else if`` constructs that do not cover all possible code paths.
 
-- New `hicpp-exception-baseclass
-  <clang-tidy/checks/hicpp-exception-baseclass.html>`_ check
+- New :doc:`modernize-use-uncaught-exceptions
+  <clang-tidy/checks/modernize-use-uncaught-exceptions>` check.
 
-  Ensures that all exception will be instances of ``std::exception`` and classes
-  that are derived from it.
+  Finds and replaces deprecated uses of ``std::uncaught_exception`` to
+  ``std::uncaught_exceptions``.
 
-- New `hicpp-signed-bitwise
-  <clang-tidy/checks/hicpp-signed-bitwise.html>`_ check
+- New :doc:`portability-simd-intrinsics
+  <clang-tidy/checks/portability-simd-intrinsics>` check.
 
-  Finds uses of bitwise operations on signed integer types, which may lead to
-  undefined or implementation defined behaviour.
+  Warns or suggests alternatives if SIMD intrinsics are used which can be replaced by
+  ``std::experimental::simd`` operations.
 
-- New `objc-avoid-nserror-init
-  <clang-tidy/checks/objc-avoid-nserror-init.html>`_ check
+- New :doc:`readability-simplify-subscript-expr
+  <clang-tidy/checks/readability-simplify-subscript-expr>` check.
 
-  Finds improper initialization of ``NSError`` objects.
+  Simplifies subscript expressions like ``s.data()[i]`` into ``s[i]``.
 
-- New `objc-avoid-spinlock
-  <clang-tidy/checks/objc-avoid-spinlock.html>`_ check
+- New :doc:`zircon-temporary-objects
+  <clang-tidy/checks/zircon-temporary-objects>` check.
 
-  Finds usages of ``OSSpinlock``, which is deprecated due to potential livelock
-  problems.
+  Warns on construction of specific temporary objects in the Zircon kernel.
 
-- New `objc-forbidden-subclassing
-  <clang-tidy/checks/objc-forbidden-subclassing.html>`_ check
+- Added the missing bitwise assignment operations to
+  :doc:`hicpp-signed-bitwise <clang-tidy/checks/hicpp-signed-bitwise>`.
 
-  Finds Objective-C classes which are subclasses of classes which are not
-  designed to be subclassed.
+- New option `MinTypeNameLength` for :doc:`modernize-use-auto
+  <clang-tidy/checks/modernize-use-auto>` check to limit the minimal length of
+  type names to be replaced with ``auto``. Use to skip replacing short type
+  names like ``int``/``bool`` with ``auto``. Default value is 5 which means
+  replace types with the name length >= 5 letters only (ex. ``double``,
+  ``unsigned``).
 
-- New `objc-property-declaration
-  <clang-tidy/checks/objc-property-declaration.html>`_ check
+- Add `VariableThreshold` option to :doc:`readability-function-size
+  <clang-tidy/checks/readability-function-size>` check.
 
-  Finds property declarations in Objective-C files that do not follow the
-  pattern of property names in Apple's programming guide.
+  Flags functions that have more than a specified number of variables declared
+  in the body.
 
-- New `readability-static-accessed-through-instance
-  <clang-tidy/checks/readability-static-accessed-through-instance.html>`_ check
+- The `AnalyzeTemporaryDtors` option was removed, since the corresponding
+  `cfg-temporary-dtors` option of the Static Analyzer now defaults to `true`.
 
-  Finds member expressions that access static members through instances and
-  replaces them with uses of the appropriate qualified-id.
+- New alias :doc:`fuchsia-header-anon-namespaces
+  <clang-tidy/checks/fuchsia-header-anon-namespaces>` to :doc:`google-build-namespaces
+  <clang-tidy/checks/google-build-namespaces>`
+  added.
 
-- The 'misc-argument-comment' check was renamed to `bugprone-argument-comment
-  <clang-tidy/checks/bugprone-argument-comment.html>`_
+- New alias :doc:`hicpp-avoid-goto
+  <clang-tidy/checks/hicpp-avoid-goto>` to :doc:`cppcoreguidelines-avoid-goto
+  <clang-tidy/checks/cppcoreguidelines-avoid-goto>`
+  added.
 
-- The 'misc-assert-side-effect' check was renamed to `bugprone-assert-side-effect
-  <clang-tidy/checks/bugprone-assert-side-effect.html>`_
+- Removed the `google-readability-redundant-smartptr-get` alias of the
+  :doc:`readability-redundant-smartptr-get
+  <clang-tidy/checks/readability-redundant-smartptr-get>` check.
 
-- The 'misc-bool-pointer-implicit-conversion' check was renamed to `bugprone-bool-pointer-implicit-conversion
-  <clang-tidy/checks/bugprone-bool-pointer-implicit-conversion.html>`_
+- The 'misc-forwarding-reference-overload' check was renamed to :doc:`bugprone-forwarding-reference-overload
+  <clang-tidy/checks/bugprone-forwarding-reference-overload>`
 
-- The 'misc-dangling-handle' check was renamed to `bugprone-dangling-handle
-  <clang-tidy/checks/bugprone-dangling-handle.html>`_
+- The 'misc-incorrect-roundings' check was renamed to :doc:`bugprone-incorrect-roundings
+  <clang-tidy/checks/bugprone-incorrect-roundings>`
 
-- The 'misc-fold-init-type' check was renamed to `bugprone-fold-init-type
-  <clang-tidy/checks/bugprone-fold-init-type.html>`_
+- The 'misc-lambda-function-name' check was renamed to :doc:`bugprone-lambda-function-name
+  <clang-tidy/checks/bugprone-lambda-function-name>`
 
-- The 'misc-forward-declaration-namespace' check was renamed to `bugprone-forward-declaration-namespace
-  <clang-tidy/checks/bugprone-forward-declaration-namespace.html>`_
+- The 'misc-macro-parentheses' check was renamed to :doc:`bugprone-macro-parentheses
+  <clang-tidy/checks/bugprone-macro-parentheses>`
 
-- The 'misc-inaccurate-erase' check was renamed to `bugprone-inaccurate-erase
-  <clang-tidy/checks/bugprone-inaccurate-erase.html>`_
+- The 'misc-macro-repeated-side-effects' check was renamed to :doc:`bugprone-macro-repeated-side-effects
+  <clang-tidy/checks/bugprone-macro-repeated-side-effects>`
 
-- The 'misc-inefficient-algorithm' check was renamed to `performance-inefficient-algorithm
-  <clang-tidy/checks/performance-inefficient-algorithm.html>`_
+- The 'misc-misplaced-widening-cast' check was renamed to :doc:`bugprone-misplaced-widening-cast
+  <clang-tidy/checks/bugprone-misplaced-widening-cast>`
 
-- The 'misc-move-const-arg' check was renamed to `performance-move-const-arg
-  <clang-tidy/checks/performance-move-const-arg.html>`_
+- The 'misc-sizeof-container' check was renamed to :doc:`bugprone-sizeof-container
+  <clang-tidy/checks/bugprone-sizeof-container>`
 
-- The 'misc-move-constructor-init' check was renamed to `performance-move-constructor-init
-  <clang-tidy/checks/performance-move-constructor-init.html>`_
+- The 'misc-sizeof-expression' check was renamed to :doc:`bugprone-sizeof-expression
+  <clang-tidy/checks/bugprone-sizeof-expression>`
 
-- The 'misc-move-forwarding-reference' check was renamed to `bugprone-move-forwarding-reference
-  <clang-tidy/checks/bugprone-move-forwarding-reference.html>`_
+- The 'misc-string-compare' check was renamed to :doc:`readability-string-compare
+  <clang-tidy/checks/readability-string-compare>`
 
-- The 'misc-multiple-statement-macro' check was renamed to `bugprone-multiple-statement-macro
-  <clang-tidy/checks/bugprone-multiple-statement-macro.html>`_
+- The 'misc-string-integer-assignment' check was renamed to :doc:`bugprone-string-integer-assignment
+  <clang-tidy/checks/bugprone-string-integer-assignment>`
 
-- The 'misc-noexcept-move-constructor' check was renamed to `performance-noexcept-move-constructor
-  <clang-tidy/checks/performance-noexcept-move-constructor.html>`_
+- The 'misc-string-literal-with-embedded-nul' check was renamed to :doc:`bugprone-string-literal-with-embedded-nul
+  <clang-tidy/checks/bugprone-string-literal-with-embedded-nul>`
 
-- The 'misc-string-constructor' check was renamed to `bugprone-string-constructor
-  <clang-tidy/checks/bugprone-string-constructor.html>`_
+- The 'misc-suspicious-enum-usage' check was renamed to :doc:`bugprone-suspicious-enum-usage
+  <clang-tidy/checks/bugprone-suspicious-enum-usage>`
 
-- The 'misc-use-after-move' check was renamed to `bugprone-use-after-move
-  <clang-tidy/checks/bugprone-use-after-move.html>`_
+- The 'misc-suspicious-missing-comma' check was renamed to :doc:`bugprone-suspicious-missing-comma
+  <clang-tidy/checks/bugprone-suspicious-missing-comma>`
 
-- The 'performance-implicit-cast-in-loop' check was renamed to `performance-implicit-conversion-in-loop
-  <clang-tidy/checks/performance-implicit-conversion-in-loop.html>`_
+- The 'misc-suspicious-semicolon' check was renamed to :doc:`bugprone-suspicious-semicolon
+  <clang-tidy/checks/bugprone-suspicious-semicolon>`
 
-- The 'readability-implicit-bool-cast' check was renamed to `readability-implicit-bool-conversion
-  <clang-tidy/checks/readability-implicit-bool-conversion.html>`_
+- The 'misc-suspicious-string-compare' check was renamed to :doc:`bugprone-suspicious-string-compare
+  <clang-tidy/checks/bugprone-suspicious-string-compare>`
 
-    The check's options were renamed as follows:
+- The 'misc-swapped-arguments' check was renamed to :doc:`bugprone-swapped-arguments
+  <clang-tidy/checks/bugprone-swapped-arguments>`
 
-    - `AllowConditionalIntegerCasts` -> `AllowIntegerConditions`,
-    - `AllowConditionalPointerCasts` -> `AllowPointerConditions`.
+- The 'misc-undelegated-constructor' check was renamed to :doc:`bugprone-undelegated-constructor
+  <clang-tidy/checks/bugprone-undelegated-constructor>`
 
-- Added `modernize-use-emplace.IgnoreImplicitConstructors
-  <clang-tidy/checks/modernize-use-emplace.html#cmdoption-arg-IgnoreImplicitConstructors>`_
-  option.
+- The 'misc-unused-raii' check was renamed to :doc:`bugprone-unused-raii
+  <clang-tidy/checks/bugprone-unused-raii>`
 
-- Added aliases for the `High Integrity C++ Coding Standard <http://www.codingstandard.com/section/index/>`_
-  to already implemented checks in other modules.
-
-  - `hicpp-deprecated-headers <clang-tidy/checks/hicpp-deprecated-headers.html>`_
-  - `hicpp-move-const-arg <clang-tidy/checks/hicpp-move-const-arg.html>`_
-  - `hicpp-no-array-decay <clang-tidy/checks/hicpp-no-array-decay.html>`_
-  - `hicpp-no-malloc <clang-tidy/checks/hicpp-no-malloc.html>`_
-  - `hicpp-static-assert <clang-tidy/checks/hicpp-static-assert.html>`_
-  - `hicpp-use-auto <clang-tidy/checks/hicpp-use-auto.html>`_
-  - `hicpp-use-emplace <clang-tidy/checks/hicpp-use-emplace.html>`_
-  - `hicpp-use-noexcept <clang-tidy/checks/hicpp-use-noexcept.html>`_
-  - `hicpp-use-nullptr <clang-tidy/checks/hicpp-use-nullptr.html>`_
-  - `hicpp-vararg <clang-tidy/checks/hicpp-vararg.html>`_
-
-- Added the ability to suppress specific checks (or all checks) in a ``NOLINT`` or ``NOLINTNEXTLINE`` comment.
-
-- Added new functionality to `misc-redundant-expression
-  <clang-tidy/checks/misc-redundant-expression.html>`_ check
-
-  Finds redundant binary operator expressions where the operators are overloaded,
-  and ones that contain the same macros twice.
-  Also checks for assignment expressions that do not change the value of the
-  assigned variable, and expressions that always evaluate to the same value
-  because of possible operator confusion.
+- The 'google-runtime-member-string-references' check was removed.

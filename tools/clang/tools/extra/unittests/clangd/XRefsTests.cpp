@@ -8,11 +8,15 @@
 //===----------------------------------------------------------------------===//
 #include "Annotations.h"
 #include "ClangdUnit.h"
+#include "Compiler.h"
 #include "Matchers.h"
+#include "SyncAPI.h"
+#include "TestFS.h"
+#include "TestTU.h"
 #include "XRefs.h"
-#include "clang/Frontend/CompilerInvocation.h"
-#include "clang/Frontend/PCHContainerOperations.h"
-#include "clang/Frontend/Utils.h"
+#include "index/FileIndex.h"
+#include "index/SymbolCollector.h"
+#include "clang/Index/IndexingAction.h"
 #include "llvm/Support/Path.h"
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
@@ -21,31 +25,17 @@ namespace clang {
 namespace clangd {
 using namespace llvm;
 
-void PrintTo(const DocumentHighlight &V, std::ostream *O) {
-  llvm::raw_os_ostream OS(*O);
-  OS << V.range;
-  if (V.kind == DocumentHighlightKind::Read)
-    OS << "(r)";
-  if (V.kind == DocumentHighlightKind::Write)
-    OS << "(w)";
-}
-
 namespace {
 using testing::ElementsAre;
 using testing::Field;
+using testing::IsEmpty;
 using testing::Matcher;
 using testing::UnorderedElementsAreArray;
 
-// FIXME: this is duplicated with FileIndexTests. Share it.
-ParsedAST build(StringRef Code) {
-  auto CI = createInvocationFromCommandLine({"clang", "-xc++", "Foo.cpp"});
-  auto Buf = MemoryBuffer::getMemBuffer(Code);
-  auto AST = ParsedAST::Build(
-      Context::empty(), std::move(CI), nullptr, std::move(Buf),
-      std::make_shared<PCHContainerOperations>(), vfs::getRealFileSystem());
-  assert(AST.hasValue());
-  return std::move(*AST);
-}
+class IgnoreDiagnostics : public DiagnosticsConsumer {
+  void onDiagnosticsReady(PathRef File,
+                          std::vector<Diag> Diagnostics) override {}
+};
 
 // Extracts ranges from an annotated example, and constructs a matcher for a
 // highlight set. Ranges should be named $read/$write as appropriate.
@@ -97,20 +87,80 @@ TEST(HighlightsTest, All) {
   };
   for (const char *Test : Tests) {
     Annotations T(Test);
-    auto AST = build(T.code());
-    EXPECT_THAT(findDocumentHighlights(Context::empty(), AST, T.point()),
-                HighlightsFrom(T))
+    auto AST = TestTU::withCode(T.code()).build();
+    EXPECT_THAT(findDocumentHighlights(AST, T.point()), HighlightsFrom(T))
         << Test;
   }
 }
 
 MATCHER_P(RangeIs, R, "") { return arg.range == R; }
 
+TEST(GoToDefinition, WithIndex) {
+  Annotations SymbolHeader(R"cpp(
+        class $forward[[Forward]];
+        class $foo[[Foo]] {};
+
+        void $f1[[f1]]();
+
+        inline void $f2[[f2]]() {}
+      )cpp");
+  Annotations SymbolCpp(R"cpp(
+      class $forward[[forward]] {};
+      void  $f1[[f1]]() {}
+    )cpp");
+
+  TestTU TU;
+  TU.Code = SymbolCpp.code();
+  TU.HeaderCode = SymbolHeader.code();
+  auto Index = TU.index();
+  auto runFindDefinitionsWithIndex = [&Index](const Annotations &Main) {
+    auto AST = TestTU::withCode(Main.code()).build();
+    return clangd::findDefinitions(AST, Main.point(), Index.get());
+  };
+
+  Annotations Test(R"cpp(// only declaration in AST.
+        void [[f1]]();
+        int main() {
+          ^f1();
+        }
+      )cpp");
+  EXPECT_THAT(runFindDefinitionsWithIndex(Test),
+              testing::ElementsAreArray(
+                  {RangeIs(SymbolCpp.range("f1")), RangeIs(Test.range())}));
+
+  Test = Annotations(R"cpp(// definition in AST.
+        void [[f1]]() {}
+        int main() {
+          ^f1();
+        }
+      )cpp");
+  EXPECT_THAT(runFindDefinitionsWithIndex(Test),
+              testing::ElementsAreArray(
+                  {RangeIs(Test.range()), RangeIs(SymbolHeader.range("f1"))}));
+
+  Test = Annotations(R"cpp(// forward declaration in AST.
+        class [[Foo]];
+        F^oo* create();
+      )cpp");
+  EXPECT_THAT(runFindDefinitionsWithIndex(Test),
+              testing::ElementsAreArray(
+                  {RangeIs(SymbolHeader.range("foo")), RangeIs(Test.range())}));
+
+  Test = Annotations(R"cpp(// defintion in AST.
+        class [[Forward]] {};
+        F^orward create();
+      )cpp");
+  EXPECT_THAT(runFindDefinitionsWithIndex(Test),
+              testing::ElementsAreArray({
+                  RangeIs(Test.range()), RangeIs(SymbolHeader.range("forward")),
+              }));
+}
+
 TEST(GoToDefinition, All) {
   const char *Tests[] = {
       R"cpp(// Local variable
         int main() {
-          [[int bonjour]];
+          int [[bonjour]];
           ^bonjour = 2;
           int test1 = bonjour;
         }
@@ -118,7 +168,7 @@ TEST(GoToDefinition, All) {
 
       R"cpp(// Struct
         namespace ns1 {
-        [[struct MyClass {}]];
+        struct [[MyClass]] {};
         } // namespace ns1
         int main() {
           ns1::My^Class* Params;
@@ -126,21 +176,21 @@ TEST(GoToDefinition, All) {
       )cpp",
 
       R"cpp(// Function definition via pointer
-        [[int foo(int) {}]]
+        int [[foo]](int) {}
         int main() {
           auto *X = &^foo;
         }
       )cpp",
 
       R"cpp(// Function declaration via call
-        [[int foo(int)]];
+        int [[foo]](int);
         int main() {
           return ^foo(42);
         }
       )cpp",
 
       R"cpp(// Field
-        struct Foo { [[int x]]; };
+        struct Foo { int [[x]]; };
         int main() {
           Foo bar;
           bar.^x;
@@ -149,27 +199,27 @@ TEST(GoToDefinition, All) {
 
       R"cpp(// Field, member initializer
         struct Foo {
-          [[int x]];
+          int [[x]];
           Foo() : ^x(0) {}
         };
       )cpp",
 
       R"cpp(// Field, GNU old-style field designator
-        struct Foo { [[int x]]; };
+        struct Foo { int [[x]]; };
         int main() {
           Foo bar = { ^x : 1 };
         }
       )cpp",
 
       R"cpp(// Field, field designator
-        struct Foo { [[int x]]; };
+        struct Foo { int [[x]]; };
         int main() {
           Foo bar = { .^x = 2 };
         }
       )cpp",
 
       R"cpp(// Method call
-        struct Foo { [[int x()]]; };
+        struct Foo { int [[x]](); };
         int main() {
           Foo bar;
           bar.^x();
@@ -177,7 +227,7 @@ TEST(GoToDefinition, All) {
       )cpp",
 
       R"cpp(// Typedef
-        [[typedef int Foo]];
+        typedef int [[Foo]];
         int main() {
           ^Foo bar;
         }
@@ -190,27 +240,747 @@ TEST(GoToDefinition, All) {
       )cpp", */
 
       R"cpp(// Namespace
-        [[namespace ns {
+        namespace [[ns]] {
         struct Foo { static void bar(); }
-        }]] // namespace ns
+        } // namespace ns
         int main() { ^ns::Foo::bar(); }
       )cpp",
 
       R"cpp(// Macro
         #define MACRO 0
-        #define [[MACRO 1]]
+        #define [[MACRO]] 1
         int main() { return ^MACRO; }
         #define MACRO 2
         #undef macro
       )cpp",
+
+      R"cpp(// Macro
+       class TTT { public: int a; };
+       #define [[FF]](S) if (int b = S.a) {}
+       void f() {
+         TTT t;
+         F^F(t);
+       }
+      )cpp",
+
+      R"cpp(// Macro argument
+       int [[i]];
+       #define ADDRESSOF(X) &X;
+       int *j = ADDRESSOF(^i);
+      )cpp",
+
+      R"cpp(// Symbol concatenated inside macro (not supported)
+       int *pi;
+       #define POINTER(X) p # X;
+       int i = *POINTER(^i);
+      )cpp",
+
+      R"cpp(// Forward class declaration
+        class Foo;
+        class [[Foo]] {};
+        F^oo* foo();
+      )cpp",
+
+      R"cpp(// Function declaration
+        void foo();
+        void g() { f^oo(); }
+        void [[foo]]() {}
+      )cpp",
+
+      R"cpp(
+        #define FF(name) class name##_Test {};
+        [[FF]](my);
+        void f() { my^_Test a; }
+      )cpp",
+
+      R"cpp(
+         #define FF() class [[Test]] {};
+         FF();
+         void f() { T^est a; }
+      )cpp",
   };
   for (const char *Test : Tests) {
     Annotations T(Test);
-    auto AST = build(T.code());
-    EXPECT_THAT(findDefinitions(Context::empty(), AST, T.point()),
-                ElementsAre(RangeIs(T.range())))
+    auto AST = TestTU::withCode(T.code()).build();
+    std::vector<Matcher<Location>> ExpectedLocations;
+    for (const auto &R : T.ranges())
+      ExpectedLocations.push_back(RangeIs(R));
+    EXPECT_THAT(findDefinitions(AST, T.point()),
+                ElementsAreArray(ExpectedLocations))
         << Test;
   }
+}
+
+TEST(GoToDefinition, RelPathsInCompileCommand) {
+  Annotations SourceAnnotations(R"cpp(
+int [[foo]];
+int baz = f^oo;
+)cpp");
+
+  IgnoreDiagnostics DiagConsumer;
+  MockCompilationDatabase CDB(/*UseRelPaths=*/true);
+  MockFSProvider FS;
+  ClangdServer Server(CDB, FS, DiagConsumer, ClangdServer::optsForTest());
+
+  auto FooCpp = testPath("foo.cpp");
+  FS.Files[FooCpp] = "";
+
+  Server.addDocument(FooCpp, SourceAnnotations.code());
+  runAddDocument(Server, FooCpp, SourceAnnotations.code());
+  auto Locations =
+      runFindDefinitions(Server, FooCpp, SourceAnnotations.point());
+  EXPECT_TRUE(bool(Locations)) << "findDefinitions returned an error";
+
+  EXPECT_THAT(*Locations, ElementsAre(Location{URIForFile{FooCpp},
+                                               SourceAnnotations.range()}));
+}
+
+TEST(Hover, All) {
+  struct OneTest {
+    StringRef Input;
+    StringRef ExpectedHover;
+  };
+
+  OneTest Tests[] = {
+      {
+          R"cpp(// No hover
+            ^int main() {
+            }
+          )cpp",
+          "",
+      },
+      {
+          R"cpp(// Local variable
+            int main() {
+              int bonjour;
+              ^bonjour = 2;
+              int test1 = bonjour;
+            }
+          )cpp",
+          "Declared in function main\n\nint bonjour",
+      },
+      {
+          R"cpp(// Local variable in method
+            struct s {
+              void method() {
+                int bonjour;
+                ^bonjour = 2;
+              }
+            };
+          )cpp",
+          "Declared in function s::method\n\nint bonjour",
+      },
+      {
+          R"cpp(// Struct
+            namespace ns1 {
+              struct MyClass {};
+            } // namespace ns1
+            int main() {
+              ns1::My^Class* Params;
+            }
+          )cpp",
+          "Declared in namespace ns1\n\nstruct MyClass {}",
+      },
+      {
+          R"cpp(// Class
+            namespace ns1 {
+              class MyClass {};
+            } // namespace ns1
+            int main() {
+              ns1::My^Class* Params;
+            }
+          )cpp",
+          "Declared in namespace ns1\n\nclass MyClass {}",
+      },
+      {
+          R"cpp(// Union
+            namespace ns1 {
+              union MyUnion { int x; int y; };
+            } // namespace ns1
+            int main() {
+              ns1::My^Union Params;
+            }
+          )cpp",
+          "Declared in namespace ns1\n\nunion MyUnion {}",
+      },
+      {
+          R"cpp(// Function definition via pointer
+            int foo(int) {}
+            int main() {
+              auto *X = &^foo;
+            }
+          )cpp",
+          "Declared in global namespace\n\nint foo(int)",
+      },
+      {
+          R"cpp(// Function declaration via call
+            int foo(int);
+            int main() {
+              return ^foo(42);
+            }
+          )cpp",
+          "Declared in global namespace\n\nint foo(int)",
+      },
+      {
+          R"cpp(// Field
+            struct Foo { int x; };
+            int main() {
+              Foo bar;
+              bar.^x;
+            }
+          )cpp",
+          "Declared in struct Foo\n\nint x",
+      },
+      {
+          R"cpp(// Field with initialization
+            struct Foo { int x = 5; };
+            int main() {
+              Foo bar;
+              bar.^x;
+            }
+          )cpp",
+          "Declared in struct Foo\n\nint x = 5",
+      },
+      {
+          R"cpp(// Static field
+            struct Foo { static int x; };
+            int main() {
+              Foo::^x;
+            }
+          )cpp",
+          "Declared in struct Foo\n\nstatic int x",
+      },
+      {
+          R"cpp(// Field, member initializer
+            struct Foo {
+              int x;
+              Foo() : ^x(0) {}
+            };
+          )cpp",
+          "Declared in struct Foo\n\nint x",
+      },
+      {
+          R"cpp(// Field, GNU old-style field designator
+            struct Foo { int x; };
+            int main() {
+              Foo bar = { ^x : 1 };
+            }
+          )cpp",
+          "Declared in struct Foo\n\nint x",
+      },
+      {
+          R"cpp(// Field, field designator
+            struct Foo { int x; };
+            int main() {
+              Foo bar = { .^x = 2 };
+            }
+          )cpp",
+          "Declared in struct Foo\n\nint x",
+      },
+      {
+          R"cpp(// Method call
+            struct Foo { int x(); };
+            int main() {
+              Foo bar;
+              bar.^x();
+            }
+          )cpp",
+          "Declared in struct Foo\n\nint x()",
+      },
+      {
+          R"cpp(// Static method call
+            struct Foo { static int x(); };
+            int main() {
+              Foo::^x();
+            }
+          )cpp",
+          "Declared in struct Foo\n\nstatic int x()",
+      },
+      {
+          R"cpp(// Typedef
+            typedef int Foo;
+            int main() {
+              ^Foo bar;
+            }
+          )cpp",
+          "Declared in global namespace\n\ntypedef int Foo",
+      },
+      {
+          R"cpp(// Namespace
+            namespace ns {
+            struct Foo { static void bar(); }
+            } // namespace ns
+            int main() { ^ns::Foo::bar(); }
+          )cpp",
+          "Declared in global namespace\n\nnamespace ns {\n}",
+      },
+      {
+          R"cpp(// Anonymous namespace
+            namespace ns {
+              namespace {
+                int foo;
+              } // anonymous namespace
+            } // namespace ns
+            int main() { ns::f^oo++; }
+          )cpp",
+          "Declared in namespace ns::(anonymous)\n\nint foo",
+      },
+      {
+          R"cpp(// Macro
+            #define MACRO 0
+            #define MACRO 1
+            int main() { return ^MACRO; }
+            #define MACRO 2
+            #undef macro
+          )cpp",
+          "#define MACRO",
+      },
+      {
+          R"cpp(// Forward class declaration
+            class Foo;
+            class Foo {};
+            F^oo* foo();
+          )cpp",
+          "Declared in global namespace\n\nclass Foo {}",
+      },
+      {
+          R"cpp(// Function declaration
+            void foo();
+            void g() { f^oo(); }
+            void foo() {}
+          )cpp",
+          "Declared in global namespace\n\nvoid foo()",
+      },
+      {
+          R"cpp(// Enum declaration
+            enum Hello {
+              ONE, TWO, THREE,
+            };
+            void foo() {
+              Hel^lo hello = ONE;
+            }
+          )cpp",
+          "Declared in global namespace\n\nenum Hello {\n}",
+      },
+      {
+          R"cpp(// Enumerator
+            enum Hello {
+              ONE, TWO, THREE,
+            };
+            void foo() {
+              Hello hello = O^NE;
+            }
+          )cpp",
+          "Declared in enum Hello\n\nONE",
+      },
+      {
+          R"cpp(// Enumerator in anonymous enum
+            enum {
+              ONE, TWO, THREE,
+            };
+            void foo() {
+              int hello = O^NE;
+            }
+          )cpp",
+          "Declared in enum (anonymous)\n\nONE",
+      },
+      {
+          R"cpp(// Global variable
+            static int hey = 10;
+            void foo() {
+              he^y++;
+            }
+          )cpp",
+          "Declared in global namespace\n\nstatic int hey = 10",
+      },
+      {
+          R"cpp(// Global variable in namespace
+            namespace ns1 {
+              static int hey = 10;
+            }
+            void foo() {
+              ns1::he^y++;
+            }
+          )cpp",
+          "Declared in namespace ns1\n\nstatic int hey = 10",
+      },
+      {
+          R"cpp(// Field in anonymous struct
+            static struct {
+              int hello;
+            } s;
+            void foo() {
+              s.he^llo++;
+            }
+          )cpp",
+          "Declared in struct (anonymous)\n\nint hello",
+      },
+      {
+          R"cpp(// Templated function
+            template <typename T>
+            T foo() {
+              return 17;
+            }
+            void g() { auto x = f^oo<int>(); }
+          )cpp",
+          "Declared in global namespace\n\ntemplate <typename T> T foo()",
+      },
+      {
+          R"cpp(// Anonymous union
+            struct outer {
+              union {
+                int abc, def;
+              } v;
+            };
+            void g() { struct outer o; o.v.d^ef++; }
+          )cpp",
+          "Declared in union outer::(anonymous)\n\nint def",
+      },
+      {
+          R"cpp(// Nothing
+            void foo() {
+              ^
+            }
+          )cpp",
+          "",
+      },
+      {
+          R"cpp(// Simple initialization with auto
+            void foo() {
+              ^auto i = 1;
+            }
+          )cpp",
+          "int",
+      },
+      {
+          R"cpp(// Simple initialization with const auto
+            void foo() {
+              const ^auto i = 1;
+            }
+          )cpp",
+          "int",
+      },
+      {
+          R"cpp(// Simple initialization with const auto&
+            void foo() {
+              const ^auto& i = 1;
+            }
+          )cpp",
+          "int",
+      },
+      {
+          R"cpp(// Simple initialization with auto&
+            void foo() {
+              ^auto& i = 1;
+            }
+          )cpp",
+          "int",
+      },
+      {
+          R"cpp(// Auto with initializer list.
+            namespace std
+            {
+              template<class _E>
+              class initializer_list {};
+            }
+            void foo() {
+              ^auto i = {1,2};
+            }
+          )cpp",
+          "class std::initializer_list<int>",
+      },
+      {
+          R"cpp(// User defined conversion to auto
+            struct Bar {
+              operator ^auto() const { return 10; }
+            };
+          )cpp",
+          "int",
+      },
+      {
+          R"cpp(// Simple initialization with decltype(auto)
+            void foo() {
+              ^decltype(auto) i = 1;
+            }
+          )cpp",
+          "int",
+      },
+      {
+          R"cpp(// Simple initialization with const decltype(auto)
+            void foo() {
+              const int j = 0;
+              ^decltype(auto) i = j;
+            }
+          )cpp",
+          "const int",
+      },
+      {
+          R"cpp(// Simple initialization with const& decltype(auto)
+            void foo() {
+              int k = 0;
+              const int& j = k;
+              ^decltype(auto) i = j;
+            }
+          )cpp",
+          "const int &",
+      },
+      {
+          R"cpp(// Simple initialization with & decltype(auto)
+            void foo() {
+              int k = 0;
+              int& j = k;
+              ^decltype(auto) i = j;
+            }
+          )cpp",
+          "int &",
+      },
+      {
+          R"cpp(// decltype with initializer list: nothing
+            namespace std
+            {
+              template<class _E>
+              class initializer_list {};
+            }
+            void foo() {
+              ^decltype(auto) i = {1,2};
+            }
+          )cpp",
+          "",
+      },
+      {
+          R"cpp(// auto function return with trailing type
+            struct Bar {};
+            ^auto test() -> decltype(Bar()) {
+              return Bar();
+            }
+          )cpp",
+          "struct Bar",
+      },
+      {
+          R"cpp(// trailing return type
+            struct Bar {};
+            auto test() -> ^decltype(Bar()) {
+              return Bar();
+            }
+          )cpp",
+          "struct Bar",
+      },
+      {
+          R"cpp(// auto in function return
+            struct Bar {};
+            ^auto test() {
+              return Bar();
+            }
+          )cpp",
+          "struct Bar",
+      },
+      {
+          R"cpp(// auto& in function return
+            struct Bar {};
+            ^auto& test() {
+              return Bar();
+            }
+          )cpp",
+          "struct Bar",
+      },
+      {
+          R"cpp(// const auto& in function return
+            struct Bar {};
+            const ^auto& test() {
+              return Bar();
+            }
+          )cpp",
+          "struct Bar",
+      },
+      {
+          R"cpp(// decltype(auto) in function return
+            struct Bar {};
+            ^decltype(auto) test() {
+              return Bar();
+            }
+          )cpp",
+          "struct Bar",
+      },
+      {
+          R"cpp(// decltype(auto) reference in function return
+            struct Bar {};
+            ^decltype(auto) test() {
+              int a;
+              return (a);
+            }
+          )cpp",
+          "int &",
+      },
+      {
+          R"cpp(// decltype lvalue reference
+            void foo() {
+              int I = 0;
+              ^decltype(I) J = I;
+            }
+          )cpp",
+          "int",
+      },
+      {
+          R"cpp(// decltype lvalue reference
+            void foo() {
+              int I= 0;
+              int &K = I;
+              ^decltype(K) J = I;
+            }
+          )cpp",
+          "int &",
+      },
+      {
+          R"cpp(// decltype lvalue reference parenthesis
+            void foo() {
+              int I = 0;
+              ^decltype((I)) J = I;
+            }
+          )cpp",
+          "int &",
+      },
+      {
+          R"cpp(// decltype rvalue reference
+            void foo() {
+              int I = 0;
+              ^decltype(static_cast<int&&>(I)) J = static_cast<int&&>(I);
+            }
+          )cpp",
+          "int &&",
+      },
+      {
+          R"cpp(// decltype rvalue reference function call
+            int && bar();
+            void foo() {
+              int I = 0;
+              ^decltype(bar()) J = bar();
+            }
+          )cpp",
+          "int &&",
+      },
+      {
+          R"cpp(// decltype of function with trailing return type.
+            struct Bar {};
+            auto test() -> decltype(Bar()) {
+              return Bar();
+            }
+            void foo() {
+              ^decltype(test()) i = test();
+            }
+          )cpp",
+          "struct Bar",
+      },
+      {
+          R"cpp(// decltype of var with decltype.
+            void foo() {
+              int I = 0;
+              decltype(I) J = I;
+              ^decltype(J) K = J;
+            }
+          )cpp",
+          "int",
+      },
+      {
+          R"cpp(// structured binding. Not supported yet
+            struct Bar {};
+            void foo() {
+              Bar a[2];
+              ^auto [x,y] = a;
+            }
+          )cpp",
+          "",
+      },
+      {
+          R"cpp(// Template auto parameter. Nothing (Not useful).
+            template<^auto T>
+            void func() {
+            }
+            void foo() {
+               func<1>();
+            }
+          )cpp",
+          "",
+      },
+  };
+
+  for (const OneTest &Test : Tests) {
+    Annotations T(Test.Input);
+    TestTU TU = TestTU::withCode(T.code());
+    TU.ExtraArgs.push_back("-std=c++17");
+    auto AST = TU.build();
+    if (auto H = getHover(AST, T.point())) {
+      EXPECT_NE("", Test.ExpectedHover) << Test.Input;
+      EXPECT_EQ(H->contents.value, Test.ExpectedHover.str()) << Test.Input;
+    } else
+      EXPECT_EQ("", Test.ExpectedHover.str()) << Test.Input;
+  }
+}
+
+TEST(GoToInclude, All) {
+  MockFSProvider FS;
+  IgnoreDiagnostics DiagConsumer;
+  MockCompilationDatabase CDB;
+  ClangdServer Server(CDB, FS, DiagConsumer, ClangdServer::optsForTest());
+
+  auto FooCpp = testPath("foo.cpp");
+  const char *SourceContents = R"cpp(
+  #include ^"$2^foo.h$3^"
+  #include "$4^invalid.h"
+  int b = a;
+  // test
+  int foo;
+  #in$5^clude "$6^foo.h"$7^
+  )cpp";
+  Annotations SourceAnnotations(SourceContents);
+  FS.Files[FooCpp] = SourceAnnotations.code();
+  auto FooH = testPath("foo.h");
+  auto FooHUri = URIForFile{FooH};
+
+  const char *HeaderContents = R"cpp([[]]#pragma once
+                                     int a;
+                                     )cpp";
+  Annotations HeaderAnnotations(HeaderContents);
+  FS.Files[FooH] = HeaderAnnotations.code();
+
+  Server.addDocument(FooH, HeaderAnnotations.code());
+  Server.addDocument(FooCpp, SourceAnnotations.code());
+
+  // Test include in preamble.
+  auto Locations =
+      runFindDefinitions(Server, FooCpp, SourceAnnotations.point());
+  ASSERT_TRUE(bool(Locations)) << "findDefinitions returned an error";
+  EXPECT_THAT(*Locations,
+              ElementsAre(Location{FooHUri, HeaderAnnotations.range()}));
+
+  // Test include in preamble, last char.
+  Locations = runFindDefinitions(Server, FooCpp, SourceAnnotations.point("2"));
+  ASSERT_TRUE(bool(Locations)) << "findDefinitions returned an error";
+  EXPECT_THAT(*Locations,
+              ElementsAre(Location{FooHUri, HeaderAnnotations.range()}));
+
+  Locations = runFindDefinitions(Server, FooCpp, SourceAnnotations.point("3"));
+  ASSERT_TRUE(bool(Locations)) << "findDefinitions returned an error";
+  EXPECT_THAT(*Locations,
+              ElementsAre(Location{FooHUri, HeaderAnnotations.range()}));
+
+  // Test include outside of preamble.
+  Locations = runFindDefinitions(Server, FooCpp, SourceAnnotations.point("6"));
+  ASSERT_TRUE(bool(Locations)) << "findDefinitions returned an error";
+  EXPECT_THAT(*Locations,
+              ElementsAre(Location{FooHUri, HeaderAnnotations.range()}));
+
+  // Test a few positions that do not result in Locations.
+  Locations = runFindDefinitions(Server, FooCpp, SourceAnnotations.point("4"));
+  ASSERT_TRUE(bool(Locations)) << "findDefinitions returned an error";
+  EXPECT_THAT(*Locations, IsEmpty());
+
+  Locations = runFindDefinitions(Server, FooCpp, SourceAnnotations.point("5"));
+  ASSERT_TRUE(bool(Locations)) << "findDefinitions returned an error";
+  EXPECT_THAT(*Locations, IsEmpty());
+
+  Locations = runFindDefinitions(Server, FooCpp, SourceAnnotations.point("7"));
+  ASSERT_TRUE(bool(Locations)) << "findDefinitions returned an error";
+  EXPECT_THAT(*Locations, IsEmpty());
 }
 
 } // namespace
