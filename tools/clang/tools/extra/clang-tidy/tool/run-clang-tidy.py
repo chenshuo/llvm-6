@@ -76,7 +76,7 @@ def make_absolute(f, directory):
 
 def get_tidy_invocation(f, clang_tidy_binary, checks, tmpdir, build_path,
                         header_filter, extra_arg, extra_arg_before, quiet,
-                        config):
+                        config, fixi):
   """Gets a command line for clang-tidy."""
   start = [clang_tidy_binary]
   if header_filter is not None:
@@ -102,6 +102,8 @@ def get_tidy_invocation(f, clang_tidy_binary, checks, tmpdir, build_path,
       start.append('-quiet')
   if config:
       start.append('-config=' + config)
+  if fixi:
+      start.append('-fix')
   start.append(f)
   return start
 
@@ -160,7 +162,7 @@ def run_tidy(args, tmpdir, build_path, queue, failed_files):
     invocation = get_tidy_invocation(name, args.clang_tidy_binary, args.checks,
                                      tmpdir, build_path, args.header_filter,
                                      args.extra_arg, args.extra_arg_before,
-                                     args.quiet, args.config)
+                                     args.quiet, args.config, args.fixi)
     sys.stdout.write(' '.join(invocation) + '\n')
     return_code = subprocess.call(invocation)
     if return_code != 0:
@@ -203,6 +205,8 @@ def main():
   parser.add_argument('files', nargs='*', default=['.*'],
                       help='files to be processed (regex on path)')
   parser.add_argument('-fix', action='store_true', help='apply fix-its')
+  parser.add_argument('-fixi', action='store_true', help='apply fix-its '
+                      'immediately')
   parser.add_argument('-format', action='store_true', help='Reformat code '
                       'after applying fixes')
   parser.add_argument('-style', default='file', help='The style of reformat '
@@ -248,6 +252,8 @@ def main():
   max_task = args.j
   if max_task == 0:
     max_task = multiprocessing.cpu_count()
+  if args.fixi:
+    max_task = 1
 
   tmpdir = None
   if args.fix or args.export_fixes:
