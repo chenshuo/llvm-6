@@ -2,6 +2,7 @@ set(LLVM_LINK_COMPONENTS support)
 
 add_clang_library(clangTidyMiscModule
   MisplacedConstCheck.cpp
+  MuduoHeaderGuardCheck.cpp
   UnconventionalAssignOperatorCheck.cpp
   DefinitionsInHeadersCheck.cpp
   MiscTidyModule.cpp

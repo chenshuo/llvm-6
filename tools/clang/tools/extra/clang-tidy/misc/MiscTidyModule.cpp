@@ -12,6 +12,7 @@
 #include "../ClangTidyModuleRegistry.h"
 #include "DefinitionsInHeadersCheck.h"
 #include "MisplacedConstCheck.h"
+#include "MuduoHeaderGuardCheck.h"
 #include "NewDeleteOverloadsCheck.h"
 #include "NonCopyableObjects.h"
 #include "RedundantExpressionCheck.h"
@@ -31,6 +32,8 @@ class MiscModule : public ClangTidyModule {
 public:
   void addCheckFactories(ClangTidyCheckFactories &CheckFactories) override {
     CheckFactories.registerCheck<MisplacedConstCheck>("misc-misplaced-const");
+    CheckFactories.registerCheck<MuduoHeaderGuardCheck>(
+        "misc-muduo-header-guard");
     CheckFactories.registerCheck<UnconventionalAssignOperatorCheck>(
         "misc-unconventional-assign-operator");
     CheckFactories.registerCheck<DefinitionsInHeadersCheck>(

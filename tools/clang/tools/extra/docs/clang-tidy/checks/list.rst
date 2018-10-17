@@ -154,6 +154,7 @@ Clang-Tidy Checks
    llvm-twine-local
    misc-definitions-in-headers
    misc-misplaced-const
+   misc-muduo-header-guard
    misc-new-delete-overloads
    misc-non-copyable-objects
    misc-redundant-expression
