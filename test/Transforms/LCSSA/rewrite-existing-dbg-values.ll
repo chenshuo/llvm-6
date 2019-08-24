@@ -54,7 +54,7 @@ attributes #1 = { nounwind readnone speculatable }
 !llvm.module.flags = !{!3, !4}
 !llvm.ident = !{!5}
 
-!0 = distinct !DICompileUnit(language: DW_LANG_C99, file: !1, producer: "clang version 8.0.0", isOptimized: true, runtimeVersion: 0, emissionKind: FullDebug, enums: !2, globals: !2)
+!0 = distinct !DICompileUnit(language: DW_LANG_C99, file: !1, producer: "clang version 8.0.0", isOptimized: true, runtimeVersion: 0, emissionKind: FullDebug, enums: !2, globals: !2, nameTableKind: None)
 !1 = !DIFile(filename: "foo.c", directory: "/")
 !2 = !{}
 !3 = !{i32 2, !"Dwarf Version", i32 4}
