@@ -186,13 +186,16 @@ void ExceptionEscapeCheck::storeOptions(ClangTidyOptions::OptionMap &Opts) {
 }
 
 void ExceptionEscapeCheck::registerMatchers(MatchFinder *Finder) {
+  if (!getLangOpts().CPlusPlus || !getLangOpts().CXXExceptions)
+    return;
+
   Finder->addMatcher(
-      functionDecl(allOf(anyOf(isNoThrow(), cxxDestructorDecl(),
-                               cxxConstructorDecl(isMoveConstructor()),
-                               cxxMethodDecl(isMoveAssignmentOperator()),
-                               hasName("main"), hasName("swap"),
-                               isEnabled(FunctionsThatShouldNotThrow)),
-                         throws(unless(isIgnored(IgnoredExceptions)))))
+      functionDecl(anyOf(isNoThrow(), cxxDestructorDecl(),
+                         cxxConstructorDecl(isMoveConstructor()),
+                         cxxMethodDecl(isMoveAssignmentOperator()),
+                         hasName("main"), hasName("swap"),
+                         isEnabled(FunctionsThatShouldNotThrow)),
+                   throws(unless(isIgnored(IgnoredExceptions))))
           .bind("thrower"),
       this);
 }
