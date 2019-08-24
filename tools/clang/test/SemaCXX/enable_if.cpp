@@ -414,7 +414,8 @@ static_assert(templated<1>() == 1, "");
 
 template <int N> constexpr int callTemplated() { return templated<N>(); }
 
-constexpr int B = callTemplated<0>(); // expected-error{{initialized by a constant expression}} expected-error@-2{{no matching function for call to 'templated'}} expected-note{{in instantiation of function template}} expected-note@-9{{candidate disabled}}
+constexpr int B = 10 + // the carat for the error should be pointing to the problematic call (on the next line), not here.
+    callTemplated<0>(); // expected-error{{initialized by a constant expression}} expected-error@-3{{no matching function for call to 'templated'}} expected-note{{in instantiation of function template}} expected-note@-10{{candidate disabled}}
 static_assert(callTemplated<1>() == 1, "");
 }
 
@@ -513,3 +514,11 @@ namespace TypeOfFn {
 
   static_assert(is_same<__typeof__(foo)*, decltype(&foo)>::value, "");
 }
+
+namespace InConstantContext {
+void foo(const char *s) __attribute__((enable_if(((void)__builtin_constant_p(*s), true), "trap"))) {}
+
+void test() {
+  InConstantContext::foo("abc");
+}
+} // namespace InConstantContext

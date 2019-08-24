@@ -101,7 +101,7 @@
 // Gy_-NOT: -ffunction-sections
 
 // RUN: %clang_cl /Gs -### -- %s 2>&1 | FileCheck -check-prefix=Gs %s
-// Gs: "-mstack-probe-size=0"
+// Gs: "-mstack-probe-size=4096"
 // RUN: %clang_cl /Gs0 -### -- %s 2>&1 | FileCheck -check-prefix=Gs0 %s
 // Gs0: "-mstack-probe-size=0"
 // RUN: %clang_cl /Gs4096 -### -- %s 2>&1 | FileCheck -check-prefix=Gs4096 %s
@@ -177,6 +177,10 @@
 // RUN: %clang_cl --target=i686-pc-win32 -Werror /Oy- /O2 -### -- %s 2>&1 | FileCheck -check-prefix=Oy_2 %s
 // Oy_2: -momit-leaf-frame-pointer
 // Oy_2: -O2
+
+// RUN: %clang_cl --target=aarch64-pc-windows-msvc -Werror /Oy- /O2 -### -- %s 2>&1 | FileCheck -check-prefix=Oy_aarch64 %s
+// Oy_aarch64: -mdisable-fp-elim
+// Oy_aarch64: -O2
 
 // RUN: %clang_cl --target=i686-pc-win32 -Werror /O2 /O2 -### -- %s 2>&1 | FileCheck -check-prefix=O2O2 %s
 // O2O2: "-O2"
@@ -386,7 +390,10 @@
 // Unsupported but parsed options. Check that we don't error on them.
 // (/Zs is for syntax-only)
 // RUN: %clang_cl /Zs \
+// RUN:     /await \
+// RUN:     /constexpr:depth1000 /constexpr:backtrace1000 /constexpr:steps1000 \
 // RUN:     /AIfoo \
+// RUN:     /AI foo_does_not_exist \
 // RUN:     /Bt \
 // RUN:     /Bt+ \
 // RUN:     /clr:pure \
@@ -420,8 +427,6 @@
 // RUN:     /Gr \
 // RUN:     /GS \
 // RUN:     /GT \
-// RUN:     /guard:cf \
-// RUN:     /guard:cf- \
 // RUN:     /GX \
 // RUN:     /Gv \
 // RUN:     /Gz \
@@ -429,6 +434,7 @@
 // RUN:     /H \
 // RUN:     /homeparams \
 // RUN:     /hotpatch \
+// RUN:     /JMC \
 // RUN:     /kernel \
 // RUN:     /LN \
 // RUN:     /MP \
@@ -439,6 +445,9 @@
 // RUN:     /QIfist \
 // RUN:     /Qimprecise_fwaits \
 // RUN:     /Qpar \
+// RUN:     /Qpar-report:1 \
+// RUN:     /Qsafe_fp_loads \
+// RUN:     /Qspectre \
 // RUN:     /Qvec-report:2 \
 // RUN:     /u \
 // RUN:     /V \
@@ -490,6 +499,13 @@
 
 // RUN: %clang_cl /Zc:threadSafeInit /c -### -- %s 2>&1 | FileCheck -check-prefix=ThreadSafeStatics %s
 // ThreadSafeStatics-NOT: "-fno-threadsafe-statics"
+
+// RUN: %clang_cl /Zc:dllexportInlines- /c -### -- %s 2>&1 | FileCheck -check-prefix=NoDllExportInlines %s
+// NoDllExportInlines: "-fno-dllexport-inlines"
+// RUN: %clang_cl /Zc:dllexportInlines /c -### -- %s 2>&1 | FileCheck -check-prefix=DllExportInlines %s
+// DllExportInlines-NOT: "-fno-dllexport-inlines"
+// RUN: %clang_cl /fallback /Zc:dllexportInlines- /c -### -- %s 2>&1 | FileCheck -check-prefix=DllExportInlinesFallback %s
+// DllExportInlinesFallback: error: option '/Zc:dllexportInlines-' is ABI-changing and not compatible with '/fallback'
 
 // RUN: %clang_cl /Zi /c -### -- %s 2>&1 | FileCheck -check-prefix=Zi %s
 // Zi: "-gcodeview"
@@ -561,12 +577,25 @@
 // RUN: %clang_cl -### -Fe%t.exe -entry:main -flto -- %s 2>&1 | FileCheck -check-prefix=LTO-WITHOUT-LLD %s
 // LTO-WITHOUT-LLD: LTO requires -fuse-ld=lld
 
+// RUN: %clang_cl  -### -- %s 2>&1 | FileCheck -check-prefix=NOCFGUARD %s
+// RUN: %clang_cl /guard:cf- -### -- %s 2>&1 | FileCheck -check-prefix=NOCFGUARD %s
+// NOCFGUARD-NOT: -cfguard
+
+// RUN: %clang_cl /guard:cf -### -- %s 2>&1 | FileCheck -check-prefix=CFGUARD %s
+// RUN: %clang_cl /guard:cf,nochecks -### -- %s 2>&1 | FileCheck -check-prefix=CFGUARD %s
+// RUN: %clang_cl /guard:nochecks -### -- %s 2>&1 | FileCheck -check-prefix=CFGUARD %s
+// CFGUARD: -cfguard
+
+// RUN: %clang_cl /guard:foo -### -- %s 2>&1 | FileCheck -check-prefix=CFGUARDINVALID %s
+// CFGUARDINVALID: invalid value 'foo' in '/guard:'
+
 // Accept "core" clang options.
 // (/Zs is for syntax-only, -Werror makes it fail hard on unknown options)
 // RUN: %clang_cl \
 // RUN:     --driver-mode=cl \
 // RUN:     -fblocks \
 // RUN:     -fcrash-diagnostics-dir=/foo \
+// RUN:     -fno-crash-diagnostics \
 // RUN:     -fno-blocks \
 // RUN:     -fbuiltin \
 // RUN:     -fno-builtin \
@@ -598,8 +627,23 @@
 // RUN:     -flto \
 // RUN:     -fmerge-all-constants \
 // RUN:     -no-canonical-prefixes \
+// RUN:     -march=skylake \
 // RUN:     --version \
 // RUN:     -Werror /Zs -- %s 2>&1
 
+// Accept clang options under the /clang: flag.
+// The first test case ensures that the SLP vectorizer is on by default and that
+// it's being turned off by the /clang:-fno-slp-vectorize flag.
+
+// RUN: %clang_cl -O2 -### -- %s 2>&1 | FileCheck -check-prefix=NOCLANG %s
+// NOCLANG: "--dependent-lib=libcmt"
+// NOCLANG-SAME: "-vectorize-slp"
+// NOCLANG-NOT: "--dependent-lib=msvcrt"
+
+// RUN: %clang_cl -O2 -MD /clang:-fno-slp-vectorize /clang:-MD /clang:-MF /clang:my_dependency_file.dep -### -- %s 2>&1 | FileCheck -check-prefix=CLANG %s
+// CLANG: "--dependent-lib=msvcrt"
+// CLANG-SAME: "-dependency-file" "my_dependency_file.dep"
+// CLANG-NOT: "--dependent-lib=libcmt"
+// CLANG-NOT: "-vectorize-slp"
 
 void f() { }
